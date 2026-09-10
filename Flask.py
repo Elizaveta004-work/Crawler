@@ -1,10 +1,11 @@
-from flask import Flask, render_template_string, request, redirect, url_for
+from flask import Flask, render_template_string, request, send_file, url_for
 import sqlite3
 from flask_sqlalchemy import SQLAlchemy
 import pandas as pd
 import matplotlib
 import matplotlib.pyplot as plt
 import io
+from io import BytesIO
 import base64
 import seaborn as sns
 
@@ -61,6 +62,18 @@ def create_distribution_plot(data_series, title="Распределение за
     plt.close()
 
     return img_base64
+
+def make_xlsx_response(filtered_df, filename):
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        filtered_df.to_excel(writer, index=False, sheet_name='Вакансии')
+    output.seek(0)
+    return send_file(
+        output,
+        mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        as_attachment=True,
+        download_name=filename
+    )
 
 @app.route('/')
 def choice():
@@ -289,6 +302,51 @@ def choice():
                                   p75=p75,
                                   plot_data_1=plot_data_1,
                                   plot_data_2=plot_data_2)
+
+@app.route('/download_xlsx_1')
+def download_xlsx_1():
+    """Выгрузка для блока «Работа с удержанием»."""
+    req_name = request.args.get('req_name_1', '')
+    experience = request.args.get('experience_1', '')
+
+    filtered = df.copy()
+    if req_name:
+        filtered = filtered[filtered['Req_name'] == req_name]
+    if experience:
+        filtered = filtered[filtered['Experience'] == experience]
+
+    if filtered.empty:
+        return "Нет данных для выгрузки по заданному фильтру", 404
+
+    parts = ['udershanie']
+    if req_name:
+        parts.append(str(req_name).replace(' ', '_'))
+    if experience:
+        parts.append(str(experience).replace(' ', '_'))
+    return make_xlsx_response(filtered, "_".join(parts) + ".xlsx")
+
+
+@app.route('/download_xlsx_2')
+def download_xlsx_2():
+    """Выгрузка для блока «Оценка рынка оплаты труда»."""
+    req_name = request.args.get('req_name_2', '')
+    experience = request.args.get('experience', '')
+
+    filtered = df.copy()
+    if req_name:
+        filtered = filtered[filtered['Req_name'] == req_name]
+    if experience:
+        filtered = filtered[filtered['Experience'] == experience]
+
+    if filtered.empty:
+        return "Нет данных для выгрузки по заданному фильтру", 404
+
+    parts = ['rynok']
+    if req_name:
+        parts.append(str(req_name).replace(' ', '_'))
+    if experience:
+        parts.append(str(experience).replace(' ', '_'))
+    return make_xlsx_response(filtered, "_".join(parts) + ".xlsx")
 
 if __name__ == '__main__':
     app.run(debug=False)
