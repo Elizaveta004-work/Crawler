@@ -86,7 +86,8 @@ def choice():
     # Параметры для второго блока (вакансия + опыт + зарплата)
     all_salary_2 = request.args.get('all_salary_2', '')
     req_name_2 = request.args.get('req_name_2', '')
-    target_experience = request.args.get('experience', '')
+    experience_2 = request.args.get('experience_2', '')
+    features = request.args.get('features', '')
 
     # Получаем списки для выпадающих списков
     req_names = sorted(df['Req_name'].dropna().unique().tolist())
@@ -97,13 +98,13 @@ def choice():
     plot_data_1 = None
     if req_name_1:
         filtered_for_plot = df[df['Req_name'] == req_name_1]
-        if target_experience and not filtered_for_plot.empty:
-            filtered_for_plot = filtered_for_plot[filtered_for_plot['Experience'] == target_experience]
+        if experience_1 and not filtered_for_plot.empty:
+            filtered_for_plot = filtered_for_plot[filtered_for_plot['Experience'] == experience_1]
         if not filtered_for_plot.empty and len(filtered_for_plot) >= 3:
             plot_data_1 = create_distribution_plot(
                 filtered_for_plot['Average value'],
                 f"Распределение зарплат для {req_name_1}" + (
-                    f" (опыт: {target_experience})" if target_experience else "")
+                    f" (опыт: {experience_1})" if experience_1 else "")
             )
     if all_salary_1 and median_1 and median_1 > 0:
         kk_salary = round(int(all_salary_1) / median_1, 1)
@@ -111,9 +112,23 @@ def choice():
         kk_salary = 'Не найден'
 
     # Расчет для второго блока
+    all_features = ['Удаленная работа', 'Работа в офисе']
+
+    # Расчет для второго блока
     filtered_df = df[df['Req_name'] == req_name_2] if req_name_2 else pd.DataFrame()
-    if target_experience and not filtered_df.empty:
-        filtered_df = filtered_df[filtered_df['Experience'] == target_experience]
+    if experience_2 and not filtered_df.empty:
+        filtered_df = filtered_df[filtered_df['Experience'] == experience_2]
+
+    # ВАЖНО: фильтрация по features ДО расчёта статистик и графика
+    if features and not filtered_df.empty:
+        if features == 'Удаленная работа':
+            filtered_df = filtered_df[
+                filtered_df['Details'].str.contains('удален', case=False, na=False)
+            ]
+        elif features == 'Работа в офисе':
+            filtered_df = filtered_df[
+                ~filtered_df['Details'].str.contains('удален', case=False, na=False)
+            ]
 
     if not filtered_df.empty:
         median_2 = filtered_df['Average value'].median()
@@ -126,17 +141,26 @@ def choice():
         kk_experience = round(int(all_salary_2) / median_2, 1)
     else:
         kk_experience = 'Не найден'
+
     plot_data_2 = None
-    if req_name_2 and not filtered_df.empty and len(filtered_df) >= 3:
-        plot_data_2 = create_distribution_plot(
-            filtered_df['Average value'],
-            f"Распределение зарплат для {req_name_2}" + (
-                f" (опыт: {target_experience})" if target_experience else "")
-        )
+    plot_error_2 = False  # <-- новая переменная
+
+    if req_name_2:
+        if filtered_df.empty or len(filtered_df) < 3:
+            plot_error_2 = True
+        else:
+            plot_data_2 = create_distribution_plot(
+                filtered_df['Average value'],
+                f"Распределение зарплат для {req_name_2}" + (
+                    f" (опыт: {experience_2})" if experience_2 else "") + (
+                    f" ({features})" if features else "")
+            )
+            if plot_data_2 is None:
+                plot_error_2 = True
 
     html = '''
     <head>
-    <h1>Аналитический инструмент кадрового (АИКА)</h1>
+    <h1>Аналитический инструмент кадрового аналитика (АИКА)</h1>
     </head>
     <body>
     <div class="two-blocks">
@@ -153,7 +177,7 @@ def choice():
             <select name="experience_1">
                 <option value="">Выберите требуемый опыт</option>
                 {% for exp in experience %}
-                <option value="{{ exp }}" {% if exp == target_experience %}selected{% endif %}>{{ exp }}</option>
+                <option value="{{ exp }}" {% if exp == experience_1 %}selected{% endif %}>{{ exp }}</option>
                 {% endfor %}
             </select>
             <br>
@@ -202,6 +226,12 @@ def choice():
             <input type="hidden" name="show_median_1" value="1">
             <button type="submit">Рекомендация</button>
         </form>
+        <br>
+        <form method="get" action="/download_xlsx_1" style="display:inline;">
+            <input type="hidden" name="req_name_1" value="{{ req_name_1 }}">
+            <input type="hidden" name="experience_1" value="{{ experience_1 }}">
+            <button type="submit">Выгрузить в Excel</button>
+        </form>
         {% if request.args.get('show_median_1') and median_1 %}
             <h3>Целевой размер оплаты: {{ median_1 }}</h3>
         {% endif %}
@@ -213,7 +243,8 @@ def choice():
             <!-- Сохраняем параметры первого блока в скрытых полях -->
             <input type="hidden" name="req_name_1" value="{{ req_name_1 }}">
             <input type="hidden" name="all_salary_1" value="{{ all_salary_1 }}">
-
+            <input type="hidden" name="experience_1" value="{{ experience_1 }}">
+            <input type="hidden" name="show_median_1" value="{{ request.args.get('show_median_1', '') }}">
             <select name="req_name_2">
                 <option value="">Выберите вакансию</option>
                 {% for name in req_names %}
@@ -221,62 +252,59 @@ def choice():
                 {% endfor %}
             </select>
             <br>
-            <select name="experience">
+            <select name="experience_2">
                 <option value="">Выберите требуемый опыт</option>
                 {% for exp in experience %}
-                <option value="{{ exp }}" {% if exp == target_experience %}selected{% endif %}>{{ exp }}</option>
+                <option value="{{ exp }}" {% if exp == experience_2 %}selected{% endif %}>{{ exp }}</option>
                 {% endfor %}
             </select>
             <br>
-            <input type="number" name="all_salary_2" 
-                   placeholder="Введите зарплату" 
-                   step="10000"
-                   value="{{ all_salary_2 }}">
+            <select name="features">
+                <option value="">Выберите особенности</option>
+                {% for feature in all_features %}
+                    <option value="{{ feature }}" {% if feature == features %}selected{% endif %}>{{ feature }}</option>
+                {% endfor %}
+            </select>
             <br>
             <button type="submit">Выбрать</button>
         </form>
         {% if req_name_2 %}
             <h2>Выбрана вакансия: {{ req_name_2 }}.</h2>
         {% endif %}
-        {% if target_experience %}
-            <h2>Требуемый опыт: {{ target_experience }}.</h2>
+        {% if experience_2 %}
+            <h2>Требуемый опыт: {{ experience_2 }}.</h2>
         {% endif %}
-        {% if all_salary_2 %}
-            <h2>Выбрана зарплата: {{ all_salary_2 }}.</h2>
+        {% if features %}
+            <h2>Выбрана особенность: {{ features }}.</h2>
         {% endif %}
-        {% if kk_experience is not none and kk_experience != 'Не найден' %}
-            <h2>
-                Коэффициент конкурентоспособности: {{ kk_experience }}.
-                {% if kk_experience < 0.8 %}
-                    🔴 Критически низкая оплата. Высокий риск ухода сотрудника. Требуется срочное повышение.
-                {% elif kk_experience >= 0.8 and kk_experience < 1.0 %}
-                    🟡 Оплата ниже рынка. Рекомендуется плановое повышение в течение 3–6 месяцев.
-                {% elif kk_experience >= 1.0 and kk_experience < 1.2 %}
-                    🟢 Оплата соответствует рынку. Конкурентоспособная заработная плата.
-                {% elif kk_experience >= 1.2 and kk_experience < 1.4 %}
-                    🟡 Оплата выше рынка. Возможно превышение бюджета. Рекомендуется проверить эффективность сотрудника.
-                {% elif kk_experience >= 1.4 %}
-                    🔴 Оплата значительно выше рынка. Требуется обоснование (уникальные навыки или выдающиеся результаты работы).
-                {% endif %}
-            </h2>
-        {% elif kk_experience == 'Не найден' %}
-            <h2>Коэффициент не может быть рассчитан. Недостаточно данных для выбранной вакансии и опыта.</h2>
-        {% endif %}
+        
         {% if plot_data_2 %}
-        <div style="margin: 20px 0;">
-            <img src="data:image/png;base64,{{ plot_data_2 }}" alt="Распределение зарплат" style="max-width: 100%;">
-        </div>
+            <div style="margin: 20px 0;">
+                <img src="data:image/png;base64,{{ plot_data_2 }}" alt="Распределение зарплат" style="max-width: 100%;">
+            </div>
+            {% elif plot_error_2 %}
+            <div style="margin: 20px 0; color: #b00; font-weight: bold;">
+                Невозможно построить график, недостаточно данных
+            </div>
         {% endif %}
         <br>
         <form method="get" style="display:inline;">
             <input type="hidden" name="req_name_1" value="{{ req_name_1 }}">
             <input type="hidden" name="all_salary_1" value="{{ all_salary_1 }}">
             <input type="hidden" name="req_name_2" value="{{ req_name_2 }}">
-            <input type="hidden" name="experience" value="{{ target_experience }}">
-            <input type="hidden" name="all_salary_2" value="{{ all_salary_2 }}">
+            <input type="hidden" name="experience_1" value="{{ experience_1 }}">
+            <input type="hidden" name="experience_2" value="{{ experience_2 }}">
+            <input type="hidden" name="features" value="{{ features }}">
             <input type="hidden" name="show_median_2" value="1">
             <input type="hidden" name="show_p75" value="1">
             <button type="submit">Рекомендация</button>
+        </form>
+        <br>
+        <form method="get" action="/download_xlsx_2" style="display:inline;">
+            <input type="hidden" name="req_name_2" value="{{ req_name_2 }}">
+            <input type="hidden" name="experience_2" value="{{ experience_2 }}">
+            <input type="hidden" name="features" value="{{ features }}">
+            <button type="submit">Выгрузить в Excel</button>
         </form>
         <br>
         {% if request.args.get('show_median_2') and median_2 and p75 %}
@@ -297,11 +325,15 @@ def choice():
                                   kk_experience=kk_experience,
                                   median_1=median_1,
                                   median_2=median_2,
-                                  target_experience=target_experience,
-                                  experience=experience,
+                                  experience_2=experience_2,
+                                  experience_1=experience_1,
                                   p75=p75,
                                   plot_data_1=plot_data_1,
-                                  plot_data_2=plot_data_2)
+                                  plot_data_2=plot_data_2,
+                                  plot_error_2=plot_error_2,
+                                  experience=experience,
+                                  features=features,
+                                  all_features=all_features)
 
 @app.route('/download_xlsx_1')
 def download_xlsx_1():
@@ -318,7 +350,7 @@ def download_xlsx_1():
     if filtered.empty:
         return "Нет данных для выгрузки по заданному фильтру", 404
 
-    parts = ['udershanie']
+    parts = ['удержание']
     if req_name:
         parts.append(str(req_name).replace(' ', '_'))
     if experience:
@@ -330,7 +362,7 @@ def download_xlsx_1():
 def download_xlsx_2():
     """Выгрузка для блока «Оценка рынка оплаты труда»."""
     req_name = request.args.get('req_name_2', '')
-    experience = request.args.get('experience', '')
+    experience = request.args.get('experience_2', '')
 
     filtered = df.copy()
     if req_name:
@@ -341,7 +373,7 @@ def download_xlsx_2():
     if filtered.empty:
         return "Нет данных для выгрузки по заданному фильтру", 404
 
-    parts = ['rynok']
+    parts = ['рынок']
     if req_name:
         parts.append(str(req_name).replace(' ', '_'))
     if experience:
