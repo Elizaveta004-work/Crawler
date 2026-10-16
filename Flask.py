@@ -13,17 +13,9 @@ matplotlib.use('Agg')
 
 app = Flask(__name__)
 
-DATA_FILE = 'vacancies_1.xlsx'
+DATA_FILE = 'vacancies.xlsx'
 
-df = pd.read_excel('vacancies_1.xlsx')
-
-df['Max_salary'] = df['Salary'].str.extract(r'до\s*([\d\s]+)').astype(float)
-df['Salary'] = df['Salary'].str.extract(r'(\d+[\s\d]*(?:\.\d+)?)')[0]
-df['Salary'] = df['Salary'].astype(float)
-df['Max_salary'] = df['Max_salary'].astype(float)
-df['Average value'] = df[['Salary', 'Max_salary']].mean(axis=1)
-
-df.to_excel('vacancies_21.xlsx', index=False)
+df = pd.read_excel('DATA_FILE')
 
 
 def create_distribution_plot(data_series, title="Распределение зарплат"):
