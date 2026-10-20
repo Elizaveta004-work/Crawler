@@ -15,7 +15,7 @@ app = Flask(__name__)
 
 DATA_FILE = 'vacancies.xlsx'
 
-df = pd.read_excel('DATA_FILE')
+df = pd.read_excel(DATA_FILE)
 
 
 def create_distribution_plot(data_series, title="Распределение зарплат"):
