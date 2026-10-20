@@ -21,18 +21,14 @@ df = pd.read_excel(DATA_FILE)
 def create_distribution_plot(data_series, title="Распределение зарплат"):
     if data_series is None or len(data_series) < 3:
         return None
-
+    
     plt.figure(figsize=(8, 4))
-
-    # Рисуем кривую плотности распределения
     sns.kdeplot(data_series, fill=True, alpha=0.5, color='blue')
 
-    # Вычисляем статистики
     median_val = data_series.median()
     min_val = data_series.min()
     max_val = data_series.max()
 
-    # Добавляем вертикальные линии для всех трех значений
     plt.axvline(median_val, color='red', linestyle='--', linewidth=2,
                 label=f'Медиана: {median_val:.0f}')
     plt.axvline(min_val, color='green', linestyle=':', linewidth=2,
@@ -46,7 +42,6 @@ def create_distribution_plot(data_series, title="Распределение за
     plt.legend()
     plt.grid(True, alpha=0.3)
 
-    # Сохраняем в base64
     buf = io.BytesIO()
     plt.savefig(buf, format='png', bbox_inches='tight')
     buf.seek(0)
@@ -106,12 +101,10 @@ def choice():
     # Расчет для второго блока
     all_features = ['Удаленная работа', 'Работа в офисе']
 
-    # Расчет для второго блока
     filtered_df = df[df['Req_name'] == req_name_2] if req_name_2 else pd.DataFrame()
     if experience_2 and not filtered_df.empty:
         filtered_df = filtered_df[filtered_df['Experience'] == experience_2]
 
-    # ВАЖНО: фильтрация по features ДО расчёта статистик и графика
     if features and not filtered_df.empty:
         if features == 'Удаленная работа':
             filtered_df = filtered_df[
@@ -135,8 +128,8 @@ def choice():
         kk_experience = 'Не найден'
 
     plot_data_2 = None
-    plot_error_2 = False  # <-- новая переменная
-
+    plot_error_2 = False
+    
     if req_name_2:
         if filtered_df.empty or len(filtered_df) < 3:
             plot_error_2 = True
