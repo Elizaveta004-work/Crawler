@@ -10,13 +10,32 @@ from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.triggers.cron import CronTrigger
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import threading
+import sys
 
 
-DB_PATH = 'sqlite:///ЦОДД_DB.db'
+DB_PATH = 'sqlite:///VACANCIES_DB.db'
 proxy = {'https:': 'https://176.213.141.107:8080'}
 excel_output = 'vacancies.xlsx'
 excel_input = 'employ.xlsx'
 MAX_WORKERS = 8
+
+class Tee: # записывать все принты в файл
+    def __init__(self, *streams):
+        self.streams = streams
+
+    def write(self, data):
+        for s in self.streams:
+            s.write(data)
+            s.flush()
+
+    def flush(self):
+        for s in self.streams:
+            s.flush()
+
+_log_file = open('updat_progress.txt', 'w', encoding='utf-8')
+sys.stdout = Tee(sys.__stdout__, _log_file)
+sys.stderr = Tee(sys.__stderr__, _log_file)
+
 
 def create_session():
     """Создаёт сессию requests с прокси."""
@@ -131,6 +150,104 @@ def get_vacancies(df, session, engine):
         pd.DataFrame(vacancies_data).to_sql('vacancies', engine, if_exists='replace', index=False)
     return vacancies_data
 
+def parse_experience(tag, default="Не указан"):
+    """
+    Обрабатывает строку с опытом работы.
+    Принимает tag (результат soup.find), возвращает нормализованную строку.
+    """
+    experience = default
+
+    if not tag or "window" in tag:
+        return experience
+
+    experience = tag.strip()
+
+    # Словарь числительных
+    num_words = {
+        "одного": "1", "одной": "1",
+        "двух": "2",
+        "трёх": "3", "трех": "3",
+        "четырёх": "4", "четырех": "4",
+        "пяти": "5",
+        "шести": "6",
+        "семи": "7",
+        "восьми": "8",
+        "девяти": "9",
+        "десяти": "10",
+        "одиннадцати": "11",
+        "двенадцати": "12",
+    }
+
+    # Заменяем словесные числительные на цифры (до "месяц"/"год"/"лет")
+    for word, digit in num_words.items():
+        experience = re.sub(
+            rf"\b{word}\b(?=\s+(?:месяц|год|лет))",
+            digit,
+            experience,
+            flags=re.IGNORECASE,
+        )
+
+    # "трёх" уже покрыт словарём, но оставим для совместимости
+    experience = re.sub(r"\bтр[её]х\b", "3", experience, flags=re.IGNORECASE)
+
+    # "от года" -> "от 1 года" (только если перед "года" нет числа)
+    experience = re.sub(
+        r"\bот\s+года\b",
+        "от 1 года",
+        experience,
+        flags=re.IGNORECASE,
+    )
+
+    experience = re.sub(
+        r"\bот\s+месяц(?:ев|а)?\b",
+        "от 1 месяца",
+        experience,
+        flags=re.IGNORECASE,
+    )
+
+    # Убираем падежные окончания у числительных ПЕРЕД единицей измерения
+    experience = re.sub(
+        r"(\d+)-х\s+(лет|год|года|месяц(?:ев|а)?)", r"\1 \2", experience
+    )
+    experience = re.sub(
+        r"(\d+)х\s+(лет|год|года|месяц(?:ев|а)?)", r"\1 \2", experience
+    )
+
+    # "3 и более лет" -> "3 лет"
+    experience = re.sub(
+        r"(\d+)\s+и\s+более\s+(лет|год|года|месяц(?:ев|а)?)",
+        r"\1 \2",
+        experience,
+    )
+
+    # "3-х" / "3х" -> "3" (глобально, ДО обрезки)
+    experience = re.sub(r"\b(\d+)-?х\b", r"\1", experience, flags=re.IGNORECASE)
+
+    # Обрезаем всё после ключевого слова, беря ПОСЛЕДНЕЕ вхождение "Опыт работы"
+    idx_start = experience.rfind("Опыт работы ")
+    if idx_start != -1:
+        rest = experience[idx_start:]
+        m = re.search(r"\d+\s*(?:год(?:а|ов)?|лет|месяц(?:ев|а)?)", rest)
+        if m:
+            experience = rest[: m.end()]
+        else:
+            # нет единицы измерения — берём до числа включительно и добавляем "лет"
+            m2 = re.search(r"Опыт работы\s+от\s+\d+", rest)
+            if m2:
+                experience = m2.group(0) + " лет"
+            else:
+                experience = rest
+
+        has_digit = re.search(r"\d", experience) is not None
+        has_measure = re.search(
+            r"(?:год(?:а|ов)?|лет|месяц(?:ев|а)?)", experience, flags=re.IGNORECASE
+        ) is not None
+        if not has_digit and not has_measure:
+            return default
+
+        return experience
+    return experience
+
 def get_json_data(soup):
 
     scripts = soup.find_all('script', type='application/ld+json')
@@ -160,20 +277,9 @@ def get_json_data(soup):
         experience = "Не указан"
 
         tag = soup.find(string=re.compile("Опыт работы от "))
-        if tag and "window" not in tag:
-            experience = tag.strip()
-            experience = re.sub(r"\bтр[её]х\b", "3", experience, flags=re.IGNORECASE)
-            experience = re.sub(r"(\d+)-х\s+(лет|год|года|месяц(?:ев|а)?)", r"\1 \2", experience)
-            idx_start = experience.find("Опыт работы ")
-            if idx_start != -1:
-                rest = experience[idx_start:]
-                for stopper in ("года", "год", "лет", "месяцев"):
-                    idx = rest.find(stopper)
-                    if idx != -1:
-                        experience = rest[:idx + len(stopper)]
-                        break
-                else:
-                    experience = rest
+        print(tag)
+        experience = parse_experience(tag, default="Не указан")
+
         salary_data = data.get('baseSalary', {}).get('value', {})
         min_val = salary_data.get('minValue')
         max_val = salary_data.get('maxValue')
@@ -294,7 +400,7 @@ def full_update():
         # 2. Сбор вакансий
         get_vacancies(df, session, engine)
 
-        # 3. Обогащение данными
+        # 3. Добавление данных
         df = pd.read_sql("SELECT * FROM vacancies", engine)
         df = make_new_data(df)
         print(df)
@@ -315,11 +421,11 @@ def main():
     scheduler = BlockingScheduler(timezone='Europe/Moscow')
     scheduler.add_job(
         full_update,
-        trigger=CronTrigger(day_of_week='sun', hour=22, minute=0),
+        trigger=CronTrigger(day_of_week='mon', hour=4, minute=0),
         id='weekly_update'
     )
 
-    # Запускаем один раз при старте
+    # Запуск один раз при старте
     full_update()
 
     # Ручной запуск по Enter в отдельном потоке
