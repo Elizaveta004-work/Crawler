@@ -19,18 +19,37 @@ excel_output = 'vacancies.xlsx'
 excel_input = 'employ.xlsx'
 MAX_WORKERS = 8
 
-class Tee: # записывать все принты в файл
-    def __init__(self, *streams):
-        self.streams = streams
+class Tee:
+    def __init__(self, console, log_file, max_words=100):
+        self.console = console
+        self.log_file = log_file
+        self.max_words = max_words
+        self._buffer = ""
 
     def write(self, data):
-        for s in self.streams:
-            s.write(data)
-            s.flush()
+        # всегда пишем в консоль
+        self.console.write(data)
+        self.console.flush()
+
+        # накапливаем в буфере до перевода строки
+        self._buffer += data
+        while "\n" in self._buffer:
+            line, self._buffer = self._buffer.split("\n", 1)
+            self._write_line_to_file(line)
+
+    def _write_line_to_file(self, line):
+        # фильтр по количеству слов
+        if len(line.split()) <= self.max_words:
+            self.log_file.write(line + "\n")
+            self.log_file.flush()
 
     def flush(self):
-        for s in self.streams:
-            s.flush()
+        # сбросить остаток буфера, если что-то осталось без \n
+        if self._buffer:
+            self._write_line_to_file(self._buffer)
+            self._buffer = ""
+        self.console.flush()
+        self.log_file.flush()
 
 _log_file = open('updat_progress.txt', 'w', encoding='utf-8')
 sys.stdout = Tee(sys.__stdout__, _log_file)
@@ -224,23 +243,36 @@ def parse_experience(tag, default="Не указан"):
     experience = re.sub(r"\b(\d+)-?х\b", r"\1", experience, flags=re.IGNORECASE)
 
     # Обрезаем всё после ключевого слова, беря ПОСЛЕДНЕЕ вхождение "Опыт работы"
-    idx_start = experience.rfind("Опыт работы ")
+    idx_start = experience.rfind("Опыт работы")
     if idx_start != -1:
         rest = experience[idx_start:]
-        m = re.search(r"\d+\s*(?:год(?:а|ов)?|лет|месяц(?:ев|а)?)", rest)
+
+        # Сначала ищем полную конструкцию с единицей измерения
+        m = re.search(
+            r"\d+\s*(?:год(?:а|ов)?|лет|месяц(?:ев|а)?)",
+            rest,
+            flags=re.IGNORECASE,
+        )
         if m:
             experience = rest[: m.end()]
         else:
-            # нет единицы измерения — берём до числа включительно и добавляем "лет"
-            m2 = re.search(r"Опыт работы\s+от\s+\d+", rest)
+            # Нет единицы измерения — берём "Опыт работы от N" и добавляем "лет"
+            m2 = re.search(r"Опыт работы\s+от\s+\d+", rest, flags=re.IGNORECASE)
             if m2:
                 experience = m2.group(0) + " лет"
             else:
-                experience = rest
+                # Финальная проверка: если есть число, но нет единицы — добавим "лет"
+                m3 = re.search(r"Опыт работы\s+(?:от\s+)?\d+", rest, flags=re.IGNORECASE)
+                if m3:
+                    experience = m3.group(0) + " лет"
+                else:
+                    experience = rest
 
         has_digit = re.search(r"\d", experience) is not None
         has_measure = re.search(
-            r"(?:год(?:а|ов)?|лет|месяц(?:ев|а)?)", experience, flags=re.IGNORECASE
+            r"(?:год(?:а|ов)?|лет|месяц(?:ев|а)?)",
+            experience,
+            flags=re.IGNORECASE,
         ) is not None
         if not has_digit and not has_measure:
             return default
