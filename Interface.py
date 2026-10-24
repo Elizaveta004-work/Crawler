@@ -21,7 +21,7 @@ df = pd.read_excel(DATA_FILE)
 def create_distribution_plot(data_series, title="Распределение зарплат"):
     if data_series is None or len(data_series) < 3:
         return None
-    
+
     plt.figure(figsize=(8, 4))
     sns.kdeplot(data_series, fill=True, alpha=0.5, color='blue')
 
@@ -62,6 +62,41 @@ def make_xlsx_response(filtered_df, filename):
         download_name=filename
     )
 
+def build_plot_or_text(data_series, title, count):
+    if data_series is not None:
+        data_series = data_series.dropna()
+
+    if data_series is None or len(data_series) < 1:
+        return None, None, True
+
+    if count == 1:
+        salary = data_series.iloc[0]
+        salary_str = f"{salary:.0f}" if pd.notna(salary) else "неизвестна"
+        text = (f"<h2>Найдена одна вакансия, подходящая под требования. "
+                f"Зарплата: {salary_str}</h2>")
+        return None, text, False
+
+    if 1 < count <= 3:
+        median = data_series.median()
+        p25 = data_series.quantile(0.25)
+        p75 = data_series.quantile(0.75)
+        median_str = f"{median:.0f}" if pd.notna(median) else "неизвестна"
+        p25_str = f"{p25:.0f}" if pd.notna(p25) else "неизвестна"
+        p75_str = f"{p75:.0f}" if pd.notna(p75) else "неизвестна"
+        text = (f"<h2>Найдено слишком мало вакансий. Медиана: {median_str}, "
+                f"P25: {p25_str}, P75: {p75_str}</h2>")
+        return None, text, False
+
+    # count >= 4 — строим график
+    if len(data_series) < 3:
+        # ← вот здесь лучше вернуть текст, а не ошибку
+        median = data_series.median()
+        text = f"<h2>Недостаточно данных для графика. Медиана: {median:.0f}</h2>"
+        return None, text, False
+
+    img = create_distribution_plot(data_series, title)
+    return img, None, img is None
+
 @app.route('/')
 def choice():
 
@@ -82,18 +117,27 @@ def choice():
 
     # Расчет для первого блока
     median_1 = df[df['Req_name'] == req_name_1]['Average value'].median() if req_name_1 else None
+    if median_1 is not None and pd.isna(median_1):
+        median_1 = "неизвестна"
     plot_data_1 = None
+    plot_message_1 = None
+    plot_error_1 = False
     if req_name_1:
         filtered_for_plot = df[df['Req_name'] == req_name_1]
         if experience_1 and not filtered_for_plot.empty:
             filtered_for_plot = filtered_for_plot[filtered_for_plot['Experience'] == experience_1]
-        if not filtered_for_plot.empty and len(filtered_for_plot) >= 3:
-            plot_data_1 = create_distribution_plot(
+        if filtered_for_plot.empty:
+            plot_error_1 = True
+        else:
+            plot_data_1, plot_message_1, _ = build_plot_or_text(
                 filtered_for_plot['Average value'],
                 f"Распределение зарплат для {req_name_1}" + (
-                    f" (опыт: {experience_1})" if experience_1 else "")
+                    f" (опыт: {experience_1})" if experience_1 else ""),
+                len(filtered_for_plot)
             )
-    if all_salary_1 and median_1 and median_1 > 0:
+            if plot_data_1 is None and plot_message_1 is None:
+                plot_error_1 = True
+    if all_salary_1 and isinstance(median_1, (int, float)) and median_1 > 0:
         kk_salary = round(int(all_salary_1) / median_1, 1)
     else:
         kk_salary = 'Не найден'
@@ -118,29 +162,30 @@ def choice():
     if not filtered_df.empty:
         median_2 = filtered_df['Average value'].median()
         p75 = filtered_df['Average value'].quantile(0.75)
+        if pd.isna(median_2):
+            median_2 = "неизвестна"
+        if pd.isna(p75):
+            p75 = "неизвестна"
     else:
         median_2 = None
         p75 = None
 
-    if all_salary_2 and median_2 and median_2 > 0:
-        kk_experience = round(int(all_salary_2) / median_2, 1)
-    else:
-        kk_experience = 'Не найден'
-
     plot_data_2 = None
+    plot_message_2 = None
     plot_error_2 = False
-    
+
     if req_name_2:
-        if filtered_df.empty or len(filtered_df) < 3:
+        if filtered_df.empty:
             plot_error_2 = True
         else:
-            plot_data_2 = create_distribution_plot(
+            plot_data_2, plot_message_2, err = build_plot_or_text(
                 filtered_df['Average value'],
                 f"Распределение зарплат для {req_name_2}" + (
                     f" (опыт: {experience_2})" if experience_2 else "") + (
-                    f" ({features})" if features else "")
+                    f" ({features})" if features else ""),
+                len(filtered_df)
             )
-            if plot_data_2 is None:
+            if err:
                 plot_error_2 = True
 
     html = '''
@@ -177,6 +222,9 @@ def choice():
         {% if req_name_1 %}
             <h2>Выбрана вакансия: {{ req_name_1 }}.</h2>
         {% endif %}
+        {% if experience_1 %}
+            <h2>Требуемый опыт: {{ experience_1 }}.</h2>
+        {% endif %}
         {% if all_salary_1 %}
             <h2>Выбрана зарплата: {{ all_salary_1 }}.</h2>
         {% endif %}
@@ -199,15 +247,25 @@ def choice():
             <h2>Коэффициент не может быть рассчитан.</h2>
         {% endif %}
         <br>
-        {% if plot_data_1 %}
+        {% if plot_message_1 %}
+        <div style="margin: 20px 0; white-space: pre-line;">
+            {{ plot_message_1 | safe }}
+        </div>
+        {% elif plot_data_1 %}
         <div style="margin: 20px 0;">
             <img src="data:image/png;base64,{{ plot_data_1 }}" alt="Распределение зарплат" style="max-width: 100%;">
         </div>
+        {% elif plot_error_1 %}
+        <div style="margin: 20px 0; color: #b00; font-weight: bold;">
+            Невозможно построить график, недостаточно данных
+        </div>
         {% endif %}
+        </div>
         <br>
         <form method="get" style="display:inline;">
             <input type="hidden" name="req_name_1" value="{{ req_name_1 }}">
             <input type="hidden" name="all_salary_1" value="{{ all_salary_1 }}">
+            <input type="hidden" name="experience_1" value="{{ experience_1 }}"> 
             <input type="hidden" name="show_median_1" value="1">
             <button type="submit">Рекомендация</button>
         </form>
@@ -218,7 +276,9 @@ def choice():
             <button type="submit">Выгрузить в Excel</button>
         </form>
         {% if request.args.get('show_median_1') and median_1 %}
-            <h3>Целевой размер оплаты: {{ median_1 }}</h3>
+            <h3>Целевой размер оплаты:
+                {% if median_1 == "неизвестна" %}неизвестна{% else %}{{ median_1 }}{% endif %}
+            </h3>
         {% endif %}
         </div>
 
@@ -253,6 +313,9 @@ def choice():
             <br>
             <button type="submit">Выбрать</button>
         </form>
+        {% if not req_name_2 %}
+            <h2>Коэффициент не может быть рассчитан.</h2>
+        {% endif %}
         {% if req_name_2 %}
             <h2>Выбрана вакансия: {{ req_name_2 }}.</h2>
         {% endif %}
@@ -263,11 +326,15 @@ def choice():
             <h2>Выбрана особенность: {{ features }}.</h2>
         {% endif %}
         
-        {% if plot_data_2 %}
+        {% if plot_message_2 %}
+        <div style="margin: 20px 0; white-space: pre-line;">
+            {{ plot_message_2 | safe }}
+        </div>
+        {% elif plot_data_2 %}
             <div style="margin: 20px 0;">
                 <img src="data:image/png;base64,{{ plot_data_2 }}" alt="Распределение зарплат" style="max-width: 100%;">
             </div>
-            {% elif plot_error_2 %}
+        {% elif plot_error_2 %}
             <div style="margin: 20px 0; color: #b00; font-weight: bold;">
                 Невозможно построить график, недостаточно данных
             </div>
@@ -293,7 +360,13 @@ def choice():
         </form>
         <br>
         {% if request.args.get('show_median_2') and median_2 and p75 %}
-            <h3>Целевой диапазон оплаты: от {{ (median_2 / 10000)|round(0)|int * 10000 }} до {{ (p75 / 10000)|round(0)|int * 10000 }}</h3>
+            <h3>Целевой диапазон оплаты:
+                {% if median_2 == "неизвестна" or p75 == "неизвестна" %}
+                    неизвестен
+                {% else %}
+                    от {{ (median_2 / 10000)|round(0)|int * 10000 }} до {{ (p75 / 10000)|round(0)|int * 10000 }}
+                {% endif %}
+            </h3>
         {% endif %}
         </div>
     <a href="/">← На главную</a>
@@ -307,14 +380,16 @@ def choice():
                                   all_salary_1=all_salary_1,
                                   all_salary_2=all_salary_2,
                                   kk_salary=kk_salary,
-                                  kk_experience=kk_experience,
                                   median_1=median_1,
                                   median_2=median_2,
                                   experience_2=experience_2,
                                   experience_1=experience_1,
                                   p75=p75,
                                   plot_data_1=plot_data_1,
+                                  plot_message_1=plot_message_1,
                                   plot_data_2=plot_data_2,
+                                  plot_message_2=plot_message_2,
+                                  plot_error_1=plot_error_1,
                                   plot_error_2=plot_error_2,
                                   experience=experience,
                                   features=features,
